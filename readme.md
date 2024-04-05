@@ -15,39 +15,45 @@ The installation is simple, just run:
 -   `make`
 -   `sudo make install`
 
-Then include the library
+Then you'd just include the library like so
 
 ```c
-#include redilon/soquetes.h
-#include redilon/paquetes
+#include "redilon.h"
 ```
 
-If you want to uninstall the lib run `sudo make uninstall` and `make clean`
+If you want to uninstall the lib run `sudo make uninstall && make clean`
 
-## Usage
+## Basic Usage
 
-See [here](./example/) for a full example.
+See [here](./examples/) for more detailed examples.
 
 Create a server:
 
 ```c
 int main()
 {
-    int server_fd = soquetes_createTcpServer(PORT, QUEUE_SIZE);
+    int server_fd = redilon_createTcpServer(PORT, QUEUE_SIZE);
     if (server_fd == -1)
     {
-        printf("err while creating server: [%s]", strerror(errno));
+        printf("err while creating server: [%s]\n", strerror(errno));
         return -1;
     }
-
-    /**
-     * Here you can choose between the different server mechanism
-     *
-     * they will return only when the server crashes.
-     */
     printf("Server started listening in port %s\n", PORT);
-    int status = soquetes_acceptConnectionsAsync(server_fd, MAX_CLIENTS, handleRequest, NULL);
-    // int status = soquetes_acceptConnectionsOnDemand(server_fd, handleRequest, NULL);
+
+    int epoll_fd;
+
+    // server conf
+    redilon_AsyncServerConf conf;
+    conf.server_fd = server_fd;
+    conf.epoll_fd = &epoll_fd;
+    conf.max_clients = MAX_CLIENTS;
+    conf.handlersArgs = NULL;
+    conf.requestHandler = handleRequest;
+    conf.onConnectionClosed = onConnectionClosed;
+    conf.onNewConnection = NULL;
+
+    int status = redilon_acceptConnectionsAsync(&conf);
+
     if (status == -1)
     {
         printf("the server has quit unexpectedly: %s", strerror(errno));
@@ -64,14 +70,14 @@ Create a client:
 
 ```c
 int main() {
-    int server_fd = soquetes_connectToTcpServer(HOST, PORT);
+    int server_fd = redilon_connectToTcpServer(HOST, PORT);
     if (server_fd == -1)
     {
         printf("err while connecting to server: [%s]\n", strerror(errno));
         return NULL;
     }
-    paquetes_Packet *packet = paquetes_create(GET_RESOURCES);
+    redilon_Packet *packet = redilon_createPacket(GET_RESOURCES);
     // we pass the resources as an argument to the handle response
-    soquetes_sendToServer(server_fd, packet, handleRes, resources);
+    int res = redilon_sendToServer(server_fd, packet, handleResponse, resources);
 }
 ```
