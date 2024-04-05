@@ -55,33 +55,34 @@ static struct addrinfo *getAddrInfo(char *host, char *port, enum SocketType type
     return addrInfo;
 }
 
-struct HandleReadArgs
+struct HandleReadThreadArgs
 {
     int fd;
-    void *handler_args;
-    soquetes_Handler handler;
+    void *args;
+    void (*onClientClosed)(int client_fd, void *args);
+    soquetes_Handler requestHandler;
 };
 
 // we are using void* as a parameter, to allow multiple arguments in threads.
-static void handleRead(void *args)
+static void handleReadThread(void *_args)
 {
-    int fd = ((struct HandleReadArgs *)args)->fd;
-    soquetes_Handler handler = ((struct HandleReadArgs *)args)->handler;
-    void *handler_args = ((struct HandleReadArgs *)args)->handler_args;
-    paquetes_Packet *packet = paquetes_create(-1);
-    if (packet == NULL)
-        return;
-    // op code and buffer size must always be explicit in the messages
-    if (recv(fd, &(packet->op_code), sizeof(uint8_t), 0) == -1)
-        return;
-    if (recv(fd, &(packet->buffer->size), sizeof(uint32_t), 0) == -1)
-        return;
-    packet->buffer->stream = malloc(packet->buffer->size);
-    if (packet->buffer->size != 0)
-        recv(fd, packet->buffer->stream, packet->buffer->size, 0);
-    handler(fd, packet->op_code, packet->buffer, handler_args);
-    paquetes_free(packet);
-    close(fd);
+    struct HandleReadThreadArgs *args = _args;
+
+    int fd = args->fd;
+    soquetes_Handler requestHandler = args->requestHandler;
+    void *handlerArgs = args->args;
+
+    // in the threaded version, to keep the connection alive we need this loop
+    // otherwise the thread will die
+    int res = 0;
+    // until connection gets closed
+    while (res != -1)
+    {
+        res = soquetes_read(args->fd, args->requestHandler, handlerArgs);
+    }
+
+    if (args->onClientClosed != NULL)
+        args->onClientClosed(fd, handlerArgs);
 };
 
 /**
@@ -89,6 +90,36 @@ static void handleRead(void *args)
  * ============ lib functions ============
  *
  **/
+
+/**
+ * @param requestHandler pass NULL if you don't expect a response from the server.
+ * @returns `-1` when client is closed
+ */
+int soquetes_read(int fd, soquetes_Handler requestHandler, void *args)
+{
+    paquetes_Packet *packet = paquetes_create(-1);
+    if (packet == NULL)
+        return 0;
+    // op code and buffer size must always be explicit in the messages
+    int bytes_read;
+    bytes_read = recv(fd, &(packet->op_code), sizeof(uint8_t), 0);
+    bytes_read = recv(fd, &(packet->buffer->size), sizeof(uint32_t), 0);
+    packet->buffer->stream = malloc(packet->buffer->size);
+    if (packet->buffer->size != 0)
+        bytes_read = recv(fd, packet->buffer->stream, packet->buffer->size, 0);
+
+    // no data was sent
+    if (bytes_read == -1)
+        return 0;
+    // connection closed
+    if (bytes_read == 0)
+        return -1;
+
+    // everything alright call the requestHandler
+    requestHandler(fd, packet->op_code, packet->buffer, args);
+    paquetes_free(packet);
+    return 0;
+};
 
 /**
  * Creates a tcp server using sockets.
@@ -137,26 +168,29 @@ int soquetes_createTcpServer(char *port, unsigned int queue_size)
  *
  * @returns `-1` if there is an error
  */
-int soquetes_acceptConnectionsAsync(int server_fd, int max_clients, soquetes_Handler handler, void *handler_args)
+int soquetes_acceptConnectionsAsync(soquetes_AsyncServerConf *conf)
 {
     // create epoll in edge-triggered mode
     int epoll_fd = epoll_create1(0);
     if (epoll_fd == -1)
         return -1;
-    if (setNonBlocking(server_fd) == -1)
+
+    *conf->epoll_fd = epoll_fd;
+
+    if (setNonBlocking(conf->server_fd) == -1)
         return -1;
     struct epoll_event event;
     memset(&event, 0, sizeof(event));
-    event.data.fd = server_fd;
+    event.data.fd = conf->server_fd;
     event.events = EPOLLIN | EPOLLET;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1)
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conf->server_fd, &event) == -1)
         return -1;
 
     // creates an array of size max_clients
-    struct epoll_event *events = calloc(max_clients, sizeof(event));
+    struct epoll_event *events = calloc(conf->max_clients, sizeof(event));
     for (;;)
     {
-        int number_fds = epoll_wait(epoll_fd, events, max_clients, -1);
+        int number_fds = epoll_wait(epoll_fd, events, conf->max_clients, -1);
         if (number_fds == -1)
         {
             free(events);
@@ -167,21 +201,20 @@ int soquetes_acceptConnectionsAsync(int server_fd, int max_clients, soquetes_Han
         {
             {
                 // error
-                if ((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) ||
+                if ((events[i].events & EPOLLERR) ||
                     (!(events[i].events & EPOLLIN)))
                 {
-                    close(events[i].data.fd);
                     continue;
                 }
                 // server socket
-                if (events[i].data.fd == server_fd)
+                if (events[i].data.fd == conf->server_fd)
                 {
                     // call accept as many times as we can
                     for (;;)
                     {
                         struct sockaddr client_addr;
                         socklen_t client_addrlen = sizeof(client_addr);
-                        int client = accept(server_fd, &client_addr, &client_addrlen);
+                        int client = accept(conf->server_fd, &client_addr, &client_addrlen);
                         if (client == -1)
                         {
                             if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -193,17 +226,19 @@ int soquetes_acceptConnectionsAsync(int server_fd, int max_clients, soquetes_Han
                         event.events = EPOLLIN | EPOLLOUT;
                         event.data.fd = client;
                         epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client, &event);
+                        if (conf->onNewConnection != NULL)
+                            conf->onNewConnection(client, conf->args);
                     };
                 }
                 // handle client
                 else
                 {
-                    struct HandleReadArgs args;
-                    args.fd = events[i].data.fd;
-                    args.handler = handler;
-                    args.handler_args = handler_args;
-                    handleRead(&args);
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL);
+                    int result = soquetes_read(events[i].data.fd, conf->requestHandler, conf->args);
+                    if (result == -1)
+                    {
+                        if (conf->onConnectionClosed != NULL)
+                            conf->onConnectionClosed(events[i].data.fd, conf->args);
+                    }
                 }
             }
         }
@@ -217,7 +252,7 @@ int soquetes_acceptConnectionsAsync(int server_fd, int max_clients, soquetes_Han
  *
  * @returns `-1` if there is an error.
  */
-int soquetes_acceptConnectionsOnDemand(int server_fd, soquetes_Handler handler, void *handler_args)
+int soquetes_acceptConnectionsOnDemand(soquetes_OnDemandServerConf *conf)
 {
     for (;;)
     {
@@ -226,28 +261,51 @@ int soquetes_acceptConnectionsOnDemand(int server_fd, soquetes_Handler handler, 
         int client;
         struct sockaddr client_addr;
         socklen_t client_addrlen = sizeof(client_addr);
-        client = accept(server_fd, &client_addr, &client_addrlen);
+        client = accept(conf->server_fd, &client_addr, &client_addrlen);
         if (client == -1)
             continue;
         // dynamically allocating memory to ensure its memory persists beyond the current iteration
-        struct HandleReadArgs *args = malloc(sizeof(struct HandleReadArgs));
+        struct HandleReadThreadArgs *args = malloc(sizeof(struct HandleReadThreadArgs));
         if (args == NULL)
         {
             close(client);
             continue;
         }
+        if (conf->onNewConnection != NULL)
+            conf->onNewConnection(client, conf->args);
+
         args->fd = client;
-        args->handler = handler;
-        args->handler_args = handler_args;
-        pthread_create(&thread, NULL, (void *)handleRead, args);
+        args->requestHandler = conf->requestHandler;
+        args->args = conf->args;
+        args->onClientClosed = conf->onConnectionClosed;
+        pthread_create(&thread, NULL, (void *)handleReadThread, args);
         pthread_detach(thread);
     };
 };
 
-void soquetes_sendToClient(int client_fd, paquetes_Packet *packet)
+/**
+ * @returns `-1` if theres is an error
+ */
+int soquetes_sendToClient(int client_fd, paquetes_Packet *packet, int should_free)
 {
-    send(client_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
-    paquetes_free(packet);
+    int res = send(client_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
+    if (should_free)
+        free(packet);
+    return res;
+}
+
+/**
+ * if you are accepting connection `on-demand` then ignore the `epoll_fd` by passing a `-1`
+ *
+ * if you are using an `async` server, be aware that a connection will be deleted from epoll if all its file descriptors have been closed.
+ * So, if you have duplicated a file descriptor via dup(2), dup2(2), fcntl(2) F_DUPFD, or fork(2), then you need to make sure to close all the fds.
+ * To prevent this, you should pass the `epoll_fd` to close all connections.
+ */
+void soquetes_closeClientConn(int client_fd, int epoll_fd)
+{
+    close(client_fd);
+    if (epoll_fd != -1)
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, NULL);
 }
 
 /**
@@ -287,13 +345,21 @@ int soquetes_connectToTcpServer(char *host, char *port)
     return fileDescriptor;
 }
 
-void soquetes_sendToServer(int server_fd, paquetes_Packet *packet, soquetes_Handler handler, void *handler_args)
+/**
+ * @param requestHandler pass NULL if you don't expect a response from the server so the app does not get stuck waiting to read.
+ * @returns `-1` if the connection closed and failed
+ */
+int soquetes_sendToServer(int server_fd, paquetes_Packet *packet, soquetes_Handler requestHandler, void *handler_args)
 {
-    send(server_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
-    struct HandleReadArgs args;
-    args.fd = server_fd;
-    args.handler = handler;
-    args.handler_args = handler_args;
-    handleRead(&args);
+    int result = send(server_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
     paquetes_free(packet);
+    if (requestHandler == NULL || result == -1)
+        return result;
+    int read = soquetes_read(server_fd, requestHandler, handler_args);
+    return read;
+}
+
+void soquetes_closeServerConn(int server_fd)
+{
+    close(server_fd);
 }
