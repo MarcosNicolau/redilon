@@ -1,40 +1,61 @@
-#include "stdlib.h"
 #include "stdio.h"
+#include "stdlib.h"
 #include "stdint.h"
 #include "stddef.h"
 #include "string.h"
-#include "./paquetes.h"
+#include "./redilon.h"
+
+// private fns
+/**
+ * Reallocates memory for the buffer.
+ *
+ * @returns 0 on success, -1 on error
+ */
+static int redilon_reallocateBuffer(redilon_Buffer *buffer, size_t size)
+{
+    void *temp = realloc(buffer->stream, buffer->size + size);
+    if (temp == NULL)
+        return -1;
+    buffer->stream = temp;
+    buffer->size += size;
+    return 0;
+}
 
 /**
+ *
+ * ============ lib functions ============
+ *
+ **/
+/**
  * Returns the data structure to which you would data.
- * When you are ready to send it, you should serialize with `paquetes_serialize`
+ * When you are ready to send it, you should serialize with `redilon_serializePacket`
  *
  * @code
- * paquetes_t *packet = packet_create(<OP_CODE>);
- * paquetes_addUInt8(packet->buffer, 10);
- * paquetes_addString(packet->buffer, "Hello world1");
- * send(fd, paquetes_serialize(packet), pack_getSize(packet), 0);
- * paquetes_free(packet);
+ * redilon_t *packet = packet_create(<OP_CODE>);
+ * redilon_addUInt8(packet->buffer, 10);
+ * redilon_addString(packet->buffer, "Hello world1");
+ * send(fd, redilon_serializePacket(packet), pack_getSize(packet), 0);
+ * redilon_freePacket(packet);
  *
  *
  * // later in your client you would
- * paquetes_t *packet = packet_create(0);
+ * redilon_t *packet = packet_create(0);
  * recv(fd, &(packet->op_code), sizeof(uint8_t), 0);
  * recv(fd, &(packet->buffer->size), sizeof(uint32_t), 0);
  * packet->buffer->stream = malloc(packet->buffer->size)
  * recv(fd, &(packet->buffer->stream), packet->buffer->size, 0);
  *
  * // and now we can start to read the data
- * int num = paquetes_getUInt8(packet->buffer);
- * int str = paquetes_getString(packet->buffer);
+ * int num = redilon_getUInt8(packet->buffer);
+ * int str = redilon_getString(packet->buffer);
  */
 
-paquetes_Packet *paquetes_create(uint8_t op_code)
+redilon_Packet *redilon_createPacket(uint8_t op_code)
 {
-    paquetes_Packet *packet = malloc(sizeof(paquetes_Packet));
+    redilon_Packet *packet = malloc(sizeof(redilon_Packet));
     if (packet == NULL)
         return NULL;
-    packet->buffer = malloc(sizeof(paquetes_Buffer));
+    packet->buffer = malloc(sizeof(redilon_Buffer));
     if (packet->buffer == NULL)
     {
         free(packet);
@@ -50,7 +71,7 @@ paquetes_Packet *paquetes_create(uint8_t op_code)
 /**
  * @returns packet total size
  */
-int paquetes_getSize(paquetes_Packet *packet)
+int redilon_getPacketSize(redilon_Packet *packet)
 {
     // sum of the op_code + buffer size field + buffer stream
     return sizeof(uint8_t) + sizeof(uint32_t) + packet->buffer->size;
@@ -61,9 +82,9 @@ int paquetes_getSize(paquetes_Packet *packet)
  *
  * @returns Serialized packet on success, `NULL` on error
  */
-void *paquetes_serialize(paquetes_Packet *packet)
+void *redilon_serializePacket(redilon_Packet *packet)
 {
-    size_t size = paquetes_getSize(packet);
+    size_t size = redilon_getPacketSize(packet);
     void *serializedPacket = malloc(size);
     if (serializedPacket == NULL)
         return NULL;
@@ -80,27 +101,12 @@ void *paquetes_serialize(paquetes_Packet *packet)
 /**
  * Deallocates packet memory.
  */
-void paquetes_free(paquetes_Packet *packet)
+void redilon_freePacket(redilon_Packet *packet)
 {
     free(packet->buffer->stream);
     free(packet->buffer);
     free(packet);
 };
-
-/**
- * Reallocates memory for the buffer.
- *
- * @returns 0 on success, -1 on error
- */
-int paquetes_reallocateBuffer(paquetes_Buffer *buffer, size_t size)
-{
-    void *temp = realloc(buffer->stream, buffer->size + size);
-    if (temp == NULL)
-        return -1;
-    buffer->stream = temp;
-    buffer->size += size;
-    return 0;
-}
 
 // packet add
 
@@ -109,9 +115,9 @@ int paquetes_reallocateBuffer(paquetes_Buffer *buffer, size_t size)
  *
  * @returns 0 on success, -1 on error
  */
-int paquetes_addUInt8(paquetes_Buffer *buffer, uint8_t value)
+int redilon_addUInt8(redilon_Buffer *buffer, uint8_t value)
 {
-    if (paquetes_reallocateBuffer(buffer, sizeof(uint8_t)) == -1)
+    if (redilon_reallocateBuffer(buffer, sizeof(uint8_t)) == -1)
         return -1;
     memcpy(buffer->stream + buffer->offset, &value, sizeof(uint8_t));
     buffer->offset += sizeof(uint8_t);
@@ -123,9 +129,9 @@ int paquetes_addUInt8(paquetes_Buffer *buffer, uint8_t value)
  *
  * @returns 0 on success, -1 on error
  */
-int paquetes_addUInt32(paquetes_Buffer *buffer, uint32_t value)
+int redilon_addUInt32(redilon_Buffer *buffer, uint32_t value)
 {
-    if (paquetes_reallocateBuffer(buffer, sizeof(uint32_t)) == -1)
+    if (redilon_reallocateBuffer(buffer, sizeof(uint32_t)) == -1)
         return -1;
     memcpy(buffer->stream + buffer->offset, &value, sizeof(uint32_t));
     buffer->offset += sizeof(uint32_t);
@@ -137,9 +143,9 @@ int paquetes_addUInt32(paquetes_Buffer *buffer, uint32_t value)
  *
  * @returns 0 on success, -1 on error
  */
-int paquetes_addUInt64(paquetes_Buffer *buffer, uint64_t value)
+int redilon_addUInt64(redilon_Buffer *buffer, uint64_t value)
 {
-    if (paquetes_reallocateBuffer(buffer, sizeof(uint64_t)) == -1)
+    if (redilon_reallocateBuffer(buffer, sizeof(uint64_t)) == -1)
         return -1;
 
     memcpy(buffer->stream + buffer->offset, &value, sizeof(uint64_t));
@@ -152,12 +158,12 @@ int paquetes_addUInt64(paquetes_Buffer *buffer, uint64_t value)
  *
  * @returns 0 on success, -1 on error
  */
-int paquetes_addString(paquetes_Buffer *buffer, char *value)
+int redilon_addString(redilon_Buffer *buffer, char *value)
 {
     uint32_t length = strlen(value) + 1;
-    if (paquetes_addUInt32(buffer, length) == -1)
+    if (redilon_addUInt32(buffer, length) == -1)
         return -1;
-    if (paquetes_reallocateBuffer(buffer, length) == -1)
+    if (redilon_reallocateBuffer(buffer, length) == -1)
         return -1;
 
     memcpy(buffer->stream + buffer->offset, value, length);
@@ -170,7 +176,7 @@ int paquetes_addString(paquetes_Buffer *buffer, char *value)
 /**
  * Reads a uint8_t value from the packet buffer.
  */
-uint8_t paquetes_getUInt8(paquetes_Buffer *buffer)
+uint8_t redilon_getUInt8(redilon_Buffer *buffer)
 {
     uint8_t value;
     memcpy(&value, buffer->stream + buffer->offset, sizeof(uint8_t));
@@ -181,7 +187,7 @@ uint8_t paquetes_getUInt8(paquetes_Buffer *buffer)
 /**
  * Reads a uint32_t value from the packet buffer.
  */
-uint32_t paquetes_getUInt32(paquetes_Buffer *buffer)
+uint32_t redilon_getUInt32(redilon_Buffer *buffer)
 {
     uint32_t value;
     memcpy(&value, buffer->stream + buffer->offset, sizeof(uint32_t));
@@ -192,7 +198,7 @@ uint32_t paquetes_getUInt32(paquetes_Buffer *buffer)
 /**
  * Reads a uint64_t value from the packet buffer.
  */
-uint64_t paquetes_getUInt64(paquetes_Buffer *buffer)
+uint64_t redilon_getUInt64(redilon_Buffer *buffer)
 {
     uint64_t value;
     memcpy(&value, buffer->stream + buffer->offset, sizeof(uint64_t));
@@ -206,10 +212,10 @@ uint64_t paquetes_getUInt64(paquetes_Buffer *buffer)
  * @returns Pointer to the string on success, `NULL` on error
  */
 
-char *paquetes_getString(paquetes_Buffer *buffer)
+char *redilon_getString(redilon_Buffer *buffer)
 {
     // we expect the string to have the length before the actual string
-    uint32_t length = paquetes_getUInt32(buffer);
+    uint32_t length = redilon_getUInt32(buffer);
     char *str = malloc(length);
     if (str == NULL)
         return NULL;

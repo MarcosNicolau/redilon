@@ -1,6 +1,6 @@
 #ifndef PROTO_H
 #define PROTO_H
-#include "../../src/paquetes.h"
+#include "../../src/redilon.h"
 
 enum ServerOperations
 {
@@ -26,32 +26,32 @@ struct Join
     char *name;
 };
 
-paquetes_Packet *encode_join(char *name)
+redilon_Packet *encode_join(char *name)
 {
-    paquetes_Packet *packet = paquetes_create(JOIN);
-    paquetes_addString(packet->buffer, name);
+    redilon_Packet *packet = redilon_createPacket(JOIN);
+    redilon_addString(packet->buffer, name);
 
     return packet;
 }
 
-void decode_join(paquetes_Buffer *buffer, struct Join *join)
+void decode_join(redilon_Buffer *buffer, struct Join *join)
 {
-    join->name = paquetes_getString(buffer);
+    join->name = redilon_getString(buffer);
 }
 
-paquetes_Packet *encode_message(char *name, char *message)
+redilon_Packet *encode_message(char *name, char *message)
 {
-    paquetes_Packet *packet = paquetes_create(NEW_MESSAGE);
-    paquetes_addString(packet->buffer, name);
-    paquetes_addString(packet->buffer, message);
+    redilon_Packet *packet = redilon_createPacket(NEW_MESSAGE);
+    redilon_addString(packet->buffer, name);
+    redilon_addString(packet->buffer, message);
 
     return packet;
 }
 
-void decode_message(paquetes_Buffer *buffer, struct Message *message)
+void decode_message(redilon_Buffer *buffer, struct Message *message)
 {
-    message->name = paquetes_getString(buffer);
-    message->msg = paquetes_getString(buffer);
+    message->name = redilon_getString(buffer);
+    message->msg = redilon_getString(buffer);
 }
 
 #endif

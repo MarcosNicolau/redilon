@@ -1,6 +1,6 @@
 #ifndef PROTO_H
 #define PROTO_H
-#include "../../src/paquetes.h"
+#include "../../src/redilon.h"
 
 enum Operations
 {
@@ -20,21 +20,21 @@ struct Resources
     uint32_t load;
 };
 
-paquetes_Packet *encode_resources(char *module, char *desc, uint32_t load)
+redilon_Packet *encode_resources(char *module, char *desc, uint32_t load)
 {
-    paquetes_Packet *packet = paquetes_create(SUCCESS);
-    paquetes_addString(packet->buffer, module);
-    paquetes_addString(packet->buffer, desc);
-    paquetes_addUInt32(packet->buffer, load);
+    redilon_Packet *packet = redilon_createPacket(SUCCESS);
+    redilon_addString(packet->buffer, module);
+    redilon_addString(packet->buffer, desc);
+    redilon_addUInt32(packet->buffer, load);
 
     return packet;
 }
 
-void decode_resources(paquetes_Buffer *buffer, struct Resources *resources)
+void decode_resources(redilon_Buffer *buffer, struct Resources *resources)
 {
-    resources->module = paquetes_getString(buffer);
-    resources->description = paquetes_getString(buffer);
-    resources->load = paquetes_getUInt32(buffer);
+    resources->module = redilon_getString(buffer);
+    resources->description = redilon_getString(buffer);
+    resources->load = redilon_getUInt32(buffer);
 }
 
 #endif

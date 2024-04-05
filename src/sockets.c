@@ -9,8 +9,7 @@
 #include "fcntl.h"
 #include "commons/log.h"
 #include "pthread.h"
-#include "./paquetes.h"
-#include "./soquetes.h"
+#include "./redilon.h"
 
 // private fns
 static int setNonBlocking(int fd)
@@ -60,16 +59,13 @@ struct HandleReadThreadArgs
     int fd;
     void *args;
     void (*onClientClosed)(int client_fd, void *args);
-    soquetes_Handler requestHandler;
+    redilon_Handler requestHandler;
 };
 
 // we are using void* as a parameter, to allow multiple arguments in threads.
 static void handleReadThread(void *_args)
 {
     struct HandleReadThreadArgs *args = _args;
-
-    int fd = args->fd;
-    soquetes_Handler requestHandler = args->requestHandler;
     void *handlerArgs = args->args;
 
     // in the threaded version, to keep the connection alive we need this loop
@@ -78,11 +74,11 @@ static void handleReadThread(void *_args)
     // until connection gets closed
     while (res != -1)
     {
-        res = soquetes_read(args->fd, args->requestHandler, handlerArgs);
+        res = redilon_read(args->fd, args->requestHandler, handlerArgs);
     }
 
     if (args->onClientClosed != NULL)
-        args->onClientClosed(fd, handlerArgs);
+        args->onClientClosed(args->fd, handlerArgs);
 };
 
 /**
@@ -95,9 +91,9 @@ static void handleReadThread(void *_args)
  * @param requestHandler pass NULL if you don't expect a response from the server.
  * @returns `-1` when client is closed
  */
-int soquetes_read(int fd, soquetes_Handler requestHandler, void *args)
+int redilon_read(int fd, redilon_Handler requestHandler, void *args)
 {
-    paquetes_Packet *packet = paquetes_create(-1);
+    redilon_Packet *packet = redilon_createPacket(-1);
     if (packet == NULL)
         return 0;
     // op code and buffer size must always be explicit in the messages
@@ -117,7 +113,7 @@ int soquetes_read(int fd, soquetes_Handler requestHandler, void *args)
 
     // everything alright call the requestHandler
     requestHandler(fd, packet->op_code, packet->buffer, args);
-    paquetes_free(packet);
+    redilon_freePacket(packet);
     return 0;
 };
 
@@ -125,7 +121,7 @@ int soquetes_read(int fd, soquetes_Handler requestHandler, void *args)
  * Creates a tcp server using sockets.
  * @returns the socket file descriptor or `-1` if it fails.
  */
-int soquetes_createTcpServer(char *port, unsigned int queue_size)
+int redilon_createTcpServer(char *port, unsigned int queue_size)
 {
     struct addrinfo *addrInfo = getAddrInfo(NULL, port, SERVER);
     if (addrInfo == NULL)
@@ -168,7 +164,7 @@ int soquetes_createTcpServer(char *port, unsigned int queue_size)
  *
  * @returns `-1` if there is an error
  */
-int soquetes_acceptConnectionsAsync(soquetes_AsyncServerConf *conf)
+int redilon_acceptConnectionsAsync(redilon_AsyncServerConf *conf)
 {
     // create epoll in edge-triggered mode
     int epoll_fd = epoll_create1(0);
@@ -227,17 +223,17 @@ int soquetes_acceptConnectionsAsync(soquetes_AsyncServerConf *conf)
                         event.data.fd = client;
                         epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client, &event);
                         if (conf->onNewConnection != NULL)
-                            conf->onNewConnection(client, conf->args);
+                            conf->onNewConnection(client, conf->handlersArgs);
                     };
                 }
                 // handle client
                 else
                 {
-                    int result = soquetes_read(events[i].data.fd, conf->requestHandler, conf->args);
+                    int result = redilon_read(events[i].data.fd, conf->requestHandler, conf->handlersArgs);
                     if (result == -1)
                     {
                         if (conf->onConnectionClosed != NULL)
-                            conf->onConnectionClosed(events[i].data.fd, conf->args);
+                            conf->onConnectionClosed(events[i].data.fd, conf->handlersArgs);
                     }
                 }
             }
@@ -252,7 +248,7 @@ int soquetes_acceptConnectionsAsync(soquetes_AsyncServerConf *conf)
  *
  * @returns `-1` if there is an error.
  */
-int soquetes_acceptConnectionsOnDemand(soquetes_OnDemandServerConf *conf)
+int redilon_acceptConnectionsOnDemand(redilon_OnDemandServerConf *conf)
 {
     for (;;)
     {
@@ -286,9 +282,9 @@ int soquetes_acceptConnectionsOnDemand(soquetes_OnDemandServerConf *conf)
 /**
  * @returns `-1` if theres is an error
  */
-int soquetes_sendToClient(int client_fd, paquetes_Packet *packet, int should_free)
+int redilon_sendToClient(int client_fd, redilon_Packet *packet, int should_free)
 {
-    int res = send(client_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
+    int res = send(client_fd, redilon_serializePacket(packet), redilon_getPacketSize(packet), 0);
     if (should_free)
         free(packet);
     return res;
@@ -301,7 +297,7 @@ int soquetes_sendToClient(int client_fd, paquetes_Packet *packet, int should_fre
  * So, if you have duplicated a file descriptor via dup(2), dup2(2), fcntl(2) F_DUPFD, or fork(2), then you need to make sure to close all the fds.
  * To prevent this, you should pass the `epoll_fd` to close all connections.
  */
-void soquetes_closeClientConn(int client_fd, int epoll_fd)
+void redilon_closeClientConn(int client_fd, int epoll_fd)
 {
     close(client_fd);
     if (epoll_fd != -1)
@@ -311,7 +307,7 @@ void soquetes_closeClientConn(int client_fd, int epoll_fd)
 /**
  * @returns server file descriptor if connection success or `-1` in case of an error.
  */
-int soquetes_connectToTcpServer(char *host, char *port)
+int redilon_connectToTcpServer(char *host, char *port)
 {
     struct addrinfo *serverInfo = getAddrInfo(host, port, CLIENT);
     if (serverInfo == NULL)
@@ -349,17 +345,17 @@ int soquetes_connectToTcpServer(char *host, char *port)
  * @param requestHandler pass NULL if you don't expect a response from the server so the app does not get stuck waiting to read.
  * @returns `-1` if the connection closed and failed
  */
-int soquetes_sendToServer(int server_fd, paquetes_Packet *packet, soquetes_Handler requestHandler, void *handler_args)
+int redilon_sendToServer(int server_fd, redilon_Packet *packet, redilon_Handler requestHandler, void *handler_args)
 {
-    int result = send(server_fd, paquetes_serialize(packet), paquetes_getSize(packet), 0);
-    paquetes_free(packet);
+    int result = send(server_fd, redilon_serializePacket(packet), redilon_getPacketSize(packet), 0);
+    redilon_freePacket(packet);
     if (requestHandler == NULL || result == -1)
         return result;
-    int read = soquetes_read(server_fd, requestHandler, handler_args);
+    int read = redilon_read(server_fd, requestHandler, handler_args);
     return read;
 }
 
-void soquetes_closeServerConn(int server_fd)
+void redilon_closeServerConn(int server_fd)
 {
     close(server_fd);
 }

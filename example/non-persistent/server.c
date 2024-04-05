@@ -1,9 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#include <string.h>
 #include "arpa/inet.h"
 #include "./proto.h"
-#include "../../src/paquetes.h"
-#include "../../src/soquetes.h"
+#include "../../src/redilon.h"
 
 // just arbitrary values
 #define QUEUE_SIZE 10
@@ -26,7 +27,7 @@ struct ConnectionArgs
     int epoll_fd;
 };
 
-void handleRequest(uint8_t client_fd, uint8_t op_code, paquetes_Buffer *buffer, void *args)
+void handleRequest(uint8_t client_fd, uint8_t op_code, redilon_Buffer *buffer, void *args)
 {
     char ip[INET6_ADDRSTRLEN];
     getClientIp(client_fd, ip);
@@ -36,15 +37,15 @@ void handleRequest(uint8_t client_fd, uint8_t op_code, paquetes_Buffer *buffer, 
     switch (op_code)
     {
     case GET_RESOURCES:
-        paquetes_Packet *packet = encode_resources("CPU", "INTEL i10 9400", 60);
-        soquetes_sendToClient(client_fd, packet, 1);
+        redilon_Packet *packet = encode_resources("CPU", "INTEL i10 9400", 60);
+        redilon_sendToClient(client_fd, packet, 1);
         break;
     default:
         printf("code not found");
         break;
     }
 
-    soquetes_closeClientConn(client_fd, my_args->epoll_fd);
+    redilon_closeClientConn(client_fd, my_args->epoll_fd);
     printf("%s request handled and closed successfully\n", ip);
 
     return;
@@ -58,7 +59,7 @@ void onConnectionClosed(int client_fd, void *args)
     char ip[INET6_ADDRSTRLEN];
     getClientIp(client_fd, ip);
     struct ConnectionArgs *my_args = args;
-    soquetes_closeClientConn(client_fd, my_args->epoll_fd);
+    redilon_closeClientConn(client_fd, my_args->epoll_fd);
     printf("%s disconnected unexpectedly\n", ip);
 }
 
@@ -70,7 +71,7 @@ void onConnectionClosed(int client_fd, void *args)
  */
 int main()
 {
-    int server_fd = soquetes_createTcpServer(PORT, QUEUE_SIZE);
+    int server_fd = redilon_createTcpServer(PORT, QUEUE_SIZE);
     if (server_fd == -1)
     {
         printf("err while creating server: [%s]\n", strerror(errno));
@@ -87,24 +88,24 @@ int main()
     struct ConnectionArgs args;
     args.epoll_fd = epoll_fd;
 
-    soquetes_AsyncServerConf conf;
+    redilon_AsyncServerConf conf;
     conf.server_fd = server_fd;
     conf.epoll_fd = &epoll_fd;
     conf.max_clients = MAX_CLIENTS;
-    conf.args = &args;
+    conf.handlersArgs = &args;
     conf.requestHandler = handleRequest;
     conf.onConnectionClosed = onConnectionClosed;
     conf.onNewConnection = NULL;
 
-    int status = soquetes_acceptConnectionsAsync(&conf);
+    int status = redilon_acceptConnectionsAsync(&conf);
 
-    // soquetes_OnDemandServerConf conf;
+    // redilon_OnDemandServerConf conf;
     // conf.server_fd = server_fd;
     // conf.requestHandler = handleRequest;
     // conf.args = NULL;
     // conf.onConnectionClosed = onConnectionClosed;
     // conf.onNewConnection = NULL;
-    // int status = soquetes_acceptConnectionsOnDemand(&conf);
+    // int status = redilon_acceptConnectionsOnDemand(&conf);
 
     if (status == -1)
     {

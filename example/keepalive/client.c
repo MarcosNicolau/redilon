@@ -1,8 +1,10 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <pthread.h>
 #include "./proto.h"
-#include "../../src/paquetes.h"
-#include "../../src/soquetes.h"
+#include "redilon.h"
 
 // settings host as null to use the loopback interface address
 #define HOST NULL
@@ -49,7 +51,7 @@ struct HandleMessageArgs
     int *msg_history_size;
 };
 
-void handleIncomingMessage(uint8_t client_fd, uint8_t operation, paquetes_Buffer *buffer, void *args)
+void handleIncomingMessage(uint8_t client_fd, uint8_t operation, redilon_Buffer *buffer, void *args)
 {
     struct HandleMessageArgs *my_args = args;
 
@@ -70,15 +72,15 @@ void getIncomingMessages(struct HandleMessageArgs *args)
     int res = 0;
     while (res != -1)
     {
-        res = soquetes_read(args->server_fd, handleIncomingMessage, args);
+        res = redilon_read(args->server_fd, handleIncomingMessage, args);
     };
     printf("socket connection closed, you'll have to rejoin...\n");
     // close conn
     struct HandleMessageArgs *my_args = args;
-    soquetes_closeServerConn(my_args->server_fd);
+    redilon_closeServerConn(my_args->server_fd);
 }
 
-void handleJoin(uint8_t client_fd, uint8_t operation, paquetes_Buffer *buffer, void *args)
+void handleJoin(uint8_t client_fd, uint8_t operation, redilon_Buffer *buffer, void *args)
 {
     if (operation == JOIN_SUCCESS)
         *((int *)args) = 0;
@@ -86,9 +88,9 @@ void handleJoin(uint8_t client_fd, uint8_t operation, paquetes_Buffer *buffer, v
 
 int join(int server_fd, char *name)
 {
-    paquetes_Packet *packet = encode_join(name);
+    redilon_Packet *packet = encode_join(name);
     int joined = -1;
-    int res = soquetes_sendToServer(server_fd, packet, handleJoin, &joined);
+    int res = redilon_sendToServer(server_fd, packet, handleJoin, &joined);
     if (res == -1 || joined == -1)
         return -1;
     return 0;
@@ -103,7 +105,7 @@ int main(int argc, char **argv)
     }
     char *name = argv[1];
 
-    int server_fd = soquetes_connectToTcpServer(HOST, PORT);
+    int server_fd = redilon_connectToTcpServer(HOST, PORT);
     if (server_fd == -1)
     {
         printf("err while connecting to server: [%s]\n", strerror(errno));
@@ -165,8 +167,8 @@ int main(int argc, char **argv)
             addMessageEntry("you", input, msg_history, &msg_history_size);
 
             // encode and send to the server
-            paquetes_Packet *packet = encode_message(name, input);
-            int sent = soquetes_sendToServer(server_fd, packet, NULL, NULL);
+            redilon_Packet *packet = encode_message(name, input);
+            int sent = redilon_sendToServer(server_fd, packet, NULL, NULL);
             if (sent == -1)
                 printf("\nsocket connection closed, you'll have to rejoin...\n");
         }

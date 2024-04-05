@@ -1,15 +1,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
+#include <string.h>
 #include "./proto.h"
-#include "../../src/paquetes.h"
-#include "../../src/soquetes.h"
+#include "../../src/redilon.h"
 
 // settings host as null to use the loopback interface address
 #define HOST NULL
 #define PORT "8000"
 
-void handleResourceResponse(uint8_t client_fd, uint8_t status, paquetes_Buffer *buffer, void *args)
+void handleResourceResponse(uint8_t client_fd, uint8_t status, redilon_Buffer *buffer, void *args)
 {
     if (status == SUCCESS)
     {
@@ -23,15 +24,15 @@ void handleResourceResponse(uint8_t client_fd, uint8_t status, paquetes_Buffer *
 struct Resources *requestResources()
 {
     struct Resources *resources = malloc(sizeof(struct Resources));
-    int server_fd = soquetes_connectToTcpServer(HOST, PORT);
+    int server_fd = redilon_connectToTcpServer(HOST, PORT);
     if (server_fd == -1)
         return NULL;
-    paquetes_Packet *packet = paquetes_create(GET_RESOURCES);
+    redilon_Packet *packet = redilon_createPacket(GET_RESOURCES);
     // we pass the resources as an argument to the handle response
-    int res = soquetes_sendToServer(server_fd, packet, handleResourceResponse, resources);
+    int res = redilon_sendToServer(server_fd, packet, handleResourceResponse, resources);
     if (res == -1)
         return NULL;
-    soquetes_closeServerConn(server_fd);
+    redilon_closeServerConn(server_fd);
     return resources;
 }
 

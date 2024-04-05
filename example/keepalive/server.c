@@ -1,10 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#include <signal.h>
+#include <string.h>
 #include "arpa/inet.h"
 #include "./proto.h"
-#include "../../src/paquetes.h"
-#include "../../src/soquetes.h"
-#include <signal.h>
+#include "../../src/redilon.h"
 
 // just arbitrary values
 #define QUEUE_SIZE 10
@@ -94,7 +95,7 @@ int addClient(int fd, char *ip, char *name, Client **clients, int *size)
 
 void broadcastMessage(Message *message, Client **clients, int size)
 {
-    paquetes_Packet *packet_message = encode_message(message->name, message->msg);
+    redilon_Packet *packet_message = encode_message(message->name, message->msg);
     if (packet_message == NULL)
         return;
 
@@ -104,12 +105,12 @@ void broadcastMessage(Message *message, Client **clients, int size)
         // but not to the sender
         if (!strcmp(clients[i]->name, message->name))
             continue;
-        soquetes_sendToClient(clients[i]->fd, packet_message, 0);
+        redilon_sendToClient(clients[i]->fd, packet_message, 0);
     }
     free(packet_message);
 };
 
-void handleRequest(uint8_t client_fd, uint8_t op_code, paquetes_Buffer *buffer, void *args)
+void handleRequest(uint8_t client_fd, uint8_t op_code, redilon_Buffer *buffer, void *args)
 {
     char ip[INET6_ADDRSTRLEN];
     getClientIp(client_fd, ip);
@@ -133,8 +134,8 @@ void handleRequest(uint8_t client_fd, uint8_t op_code, paquetes_Buffer *buffer, 
         // add client
         int added = addClient(client_fd, ip, join.name, my_args->clients, &my_args->clients_size);
         // ack
-        paquetes_Packet *packet_join = paquetes_create(added == -1 ? JOIN_FAILURE : JOIN_SUCCESS);
-        soquetes_sendToClient(client_fd, packet_join, 1);
+        redilon_Packet *packet_join = redilon_createPacket(added == -1 ? JOIN_FAILURE : JOIN_SUCCESS);
+        redilon_sendToClient(client_fd, packet_join, 1);
 
         if (added == -1)
             break;
@@ -166,7 +167,7 @@ void onConnectionClosed(int client_fd, void *args)
     struct ConnectionArgs *my_args = args;
 
     Client *client = removeClient(client_fd, my_args->clients, &my_args->clients_size);
-    soquetes_closeClientConn(client_fd, my_args->epoll_fd);
+    redilon_closeClientConn(client_fd, my_args->epoll_fd);
     printf("%s disconnected unexpectedly\n", ip);
 
     if (client == NULL)
@@ -195,7 +196,7 @@ void onNewConnection(int client_fd, void *args)
  */
 int main()
 {
-    int server_fd = soquetes_createTcpServer(PORT, QUEUE_SIZE);
+    int server_fd = redilon_createTcpServer(PORT, QUEUE_SIZE);
     if (server_fd == -1)
     {
         printf("err while creating server: [%s]\n", strerror(errno));
@@ -213,16 +214,16 @@ int main()
     args.clients_size = 0;
     args.clients = clients;
 
-    soquetes_AsyncServerConf conf;
+    redilon_AsyncServerConf conf;
     conf.server_fd = server_fd;
     conf.epoll_fd = &epoll_fd;
     conf.max_clients = MAX_CLIENTS;
-    conf.args = &args;
+    conf.handlersArgs = &args;
     conf.requestHandler = handleRequest;
     conf.onConnectionClosed = onConnectionClosed;
     conf.onNewConnection = onNewConnection;
 
-    int status = soquetes_acceptConnectionsAsync(&conf);
+    int status = redilon_acceptConnectionsAsync(&conf);
 
     if (status == -1)
     {
